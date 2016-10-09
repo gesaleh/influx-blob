@@ -1,7 +1,11 @@
 package blob
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/mark-rushakoff/influx-blob/internal/influxclient"
 )
@@ -62,13 +66,180 @@ func (v *InfluxVolume) PutBlock(data []byte, bm *BlockMeta) error {
 	})
 }
 
+func (v *InfluxVolume) GetBlock(bm *BlockMeta) ([]byte, error) {
+	encoded, err := v.client.GetSingleBlock(v.database, v.retentionPolicy, bm.Path, bm.Index)
+	if err != nil {
+		return nil, err
+	}
+
+	// TODO: validate checksum
+
+	// It's safe to Z85DecodeAppend into the source slice.
+	return Z85DecodeAppend(encoded[:0], encoded), nil
+}
+
 func (v *InfluxVolume) List(prefix, measurement string) ([]*FileMeta, error) {
 	// SHOW SERIES FROM <m> WHERE path =~ /^.../ AND bi='1'
 	//
 	return nil, nil
 }
 
-func (v *InfluxVolume) ListBlocks(path, measurement string, fm FileMeta) ([]*BlockMeta, error) {
-	// SHOW SERIES FROM <m> WHERE path = path
-	return nil, nil
+// ListBlocks returns a slice of block meta information belonging to path exactly.
+// There may be multiple timestamps that match.
+//
+// The path must be an exact match.
+func (v *InfluxVolume) ListBlocks(path string) ([]*BlockMeta, error) {
+	ss, err := v.client.ShowSeriesForPath(path, influxclient.QueryOpts{
+		Database:        v.database,
+		RetentionPolicy: v.retentionPolicy,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	mb := newMetaBuilder(len(ss))
+	for _, s := range ss {
+		// Assuming no malformed data arrived, tag values will never be escaped
+		// and the series key can be parsed by splitting on commas and equals.
+		if err := mb.Add(s); err != nil {
+			return nil, err
+		}
+	}
+
+	return mb.blocks, nil
+}
+
+// Internal struct to quickly look up a timestamp-less FileMeta from a series key.
+// You don't need to bother splitting the tags on = if you don't want to.
+type fileKey struct {
+	Path      string
+	SHA256    string
+	Size      string
+	BlockSize string
+}
+
+type metaBuilder struct {
+	blocks []*BlockMeta
+	files  map[fileKey]*FileMeta
+}
+
+// newMetaBuilder returns a new metaBuilder with capacity for initialSize files.
+func newMetaBuilder(initialSize int) *metaBuilder {
+	return &metaBuilder{
+		blocks: make([]*BlockMeta, 0, 4*initialSize),
+		files:  make(map[fileKey]*FileMeta, initialSize),
+	}
+}
+
+// Add parses a series key string into a new BlockMeta.
+// Prevents duplicate FileMeta.
+func (m *metaBuilder) Add(sk string) error {
+	parts := strings.Split(sk, ",")
+	if len(parts) != 6 {
+		panic(fmt.Sprintf("exp 6 part, got: %#v", parts))
+	}
+
+	var (
+		// Raw path
+		path = parts[0]
+
+		// Everything else is k=v, and we'll need to split them up
+
+		blockIndex  = parts[1]
+		blockSize   = parts[2]
+		blockSHA256 = parts[3]
+		fileSHA256  = parts[4]
+		size        = parts[5]
+	)
+
+	// Ensure we have the one copy of this fileMeta.
+	fk := fileKey{Path: path, SHA256: fileSHA256, Size: size, BlockSize: blockSize}
+	var fm *FileMeta
+	if fm = m.files[fk]; fm == nil {
+		var err error
+		fm, err = fileMetaFromFileKey(fk)
+		if err != nil {
+			return err
+		}
+		m.files[fk] = fm
+	}
+
+	// Always make a new BlockMeta.
+	i, err := getV("bi", blockIndex)
+	if err != nil {
+		return err
+	}
+	idx, err := strconv.Atoi(i)
+	if err != nil {
+		return err
+	}
+	bm := fm.NewBlockMeta(idx)
+
+	// Copy in the hash.
+	hexSha, err := getV("bsha256", blockSHA256)
+	if err != nil {
+		return err
+	}
+	if dl := hex.DecodedLen(len(hexSha)); dl != sha256.Size {
+		return fmt.Errorf("exp sha length %d, got %s (len %d)", sha256.Size, hexSha, dl)
+	}
+	sha, err := hex.DecodeString(hexSha)
+	if err != nil {
+		return err
+	}
+	copy(bm.SHA256[:], sha)
+
+	m.blocks = append(m.blocks, bm)
+	return nil
+}
+
+func getV(k, kv string) (string, error) {
+	parts := strings.Split(kv, "=")
+	if len(parts) != 2 {
+		return "", fmt.Errorf("exp 2 parts, got %#v", parts)
+	}
+	if parts[0] != k {
+		return "", fmt.Errorf("exp key %s, got %s", k, parts[0])
+	}
+	return parts[1], nil
+}
+
+func fileMetaFromFileKey(fk fileKey) (*FileMeta, error) {
+	blockSize, err := getV("bs", fk.BlockSize)
+	if err != nil {
+		return nil, err
+	}
+	bs, err := strconv.Atoi(blockSize)
+	if err != nil {
+		return nil, err
+	}
+
+	size, err := getV("sz", fk.Size)
+	if err != nil {
+		return nil, err
+	}
+	sz, err := strconv.Atoi(size)
+	if err != nil {
+		return nil, err
+	}
+
+	hexSha, err := getV("sha256", fk.SHA256)
+	if err != nil {
+		return nil, err
+	}
+	if dl := hex.DecodedLen(len(hexSha)); dl != sha256.Size {
+		return nil, fmt.Errorf("exp sha length %d, got %s (len %d)", sha256.Size, hexSha, dl)
+	}
+	sha, err := hex.DecodeString(hexSha)
+	if err != nil {
+		return nil, err
+	}
+
+	fm := &FileMeta{
+		Path:      fk.Path,
+		BlockSize: bs,
+		Size:      sz,
+	}
+	copy(fm.SHA256[:], sha)
+	return fm, nil
 }

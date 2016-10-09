@@ -2,6 +2,7 @@ package blob
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"sync"
 )
@@ -88,8 +89,8 @@ func (e *Engine) PutFile(f io.ReaderAt, fm *FileMeta, bp BlockPutter) (*PutFileP
 }
 
 func (e *Engine) PutBlock(r io.Reader, bm *BlockMeta, bp BlockPutter) error {
-	data := make([]byte, bm.expSize)
-	buf := bytes.NewBuffer(data[:0])
+	data := make([]byte, 0, bm.expSize)
+	buf := bytes.NewBuffer(data)
 	if _, err := io.Copy(buf, r); err != nil {
 		return err
 	}
@@ -105,4 +106,55 @@ type PutFileProgress struct {
 func (p *PutFileProgress) Wait() {
 	// The read will return immediately if the channel is closed.
 	<-p.done
+}
+
+func (e *Engine) GetFile(w io.WriterAt, fm *FileMeta, bg BlockGetter) (*PutFileProgress, error) {
+	var wg sync.WaitGroup
+	nBlocks := fm.NumBlocks()
+	for i := 0; i < nBlocks; i++ {
+		wg.Add(1)
+		bm := fm.NewBlockMeta(i)
+		go func() {
+			defer wg.Done()
+			// Acquire/release semaphore.
+			<-e.upR
+			defer func() { e.upR <- struct{}{} }()
+			if err := e.GetBlock(w, bm, bg); err != nil {
+				panic(err)
+			}
+		}()
+	}
+
+	done := make(chan struct{})
+
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	return &PutFileProgress{done: done}, nil
+}
+
+type BlockGetter interface {
+	GetBlock(*BlockMeta) ([]byte, error)
+}
+
+func (e *Engine) GetBlock(w io.WriterAt, bm *BlockMeta, bg BlockGetter) error {
+	data, err := bg.GetBlock(bm)
+	if err != nil {
+		return err
+	}
+	if len(data) != bm.BlockSize {
+		return fmt.Errorf("data did not match block size")
+	}
+
+	// TODO: validate sha512
+
+	if n, err := w.WriteAt(data, int64(bm.offset)); err != nil {
+		return err
+	} else if n != bm.expSize {
+		return fmt.Errorf("block %d did not write expected size %d, got %d", bm.Index, bm.expSize, n)
+	}
+
+	return nil
 }
