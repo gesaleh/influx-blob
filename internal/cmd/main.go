@@ -1,7 +1,10 @@
 package cmd
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -80,7 +83,7 @@ func get(args []string, e *blob.Engine, v *blob.InfluxVolume) error {
 	}
 
 	// Open the file write-only, must not already exist.
-	out, err := os.OpenFile(args[3], os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	out, err := os.OpenFile(args[3], os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return err
 	}
@@ -95,6 +98,16 @@ func get(args []string, e *blob.Engine, v *blob.InfluxVolume) error {
 	fmt.Println("Get initiated, waiting for completion.")
 	progress.Wait()
 	fmt.Println("Get complete!")
+
+	h := sha256.New()
+	if _, err := io.Copy(h, out); err != nil {
+		return err
+	}
+
+	sha := bms[0].FileMeta.SHA256[:]
+	if !bytes.Equal(h.Sum(nil), sha) {
+		return fmt.Errorf("exp file checksum %x, got %x", sha, h.Sum(nil))
+	}
 
 	return nil
 }
