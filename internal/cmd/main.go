@@ -79,9 +79,6 @@ func get(args []string, e *blob.Engine, v *blob.InfluxVolume) error {
 		return fmt.Errorf("No blocks found for path: %s", args[2])
 	}
 
-	// TODO: handle multiple FileMeta
-	fm := bms[0].FileMeta
-
 	// Open the file write-only, must not already exist.
 	out, err := os.OpenFile(args[3], os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
@@ -89,7 +86,8 @@ func get(args []string, e *blob.Engine, v *blob.InfluxVolume) error {
 	}
 	defer out.Close()
 
-	progress, err := e.GetFile(out, fm, v)
+	// TODO: handle multiple FileMeta
+	progress, err := e.GetBlocks(out, bms, v)
 	if err != nil {
 		return err
 	}

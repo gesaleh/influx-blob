@@ -36,12 +36,24 @@ func Z85EncodedLen(n int) int {
 // Because dst grows more quickly than src, dst must not overlap src.
 func Z85EncodeAppend(dst []byte, src []byte) []byte {
 	nFrames := len(src) / 4
+	if nFrames * 4 < len(src) {
+		nFrames++
+	}
 
 	var buf [5]byte
 	for i := 0; i < nFrames; i++ {
+		head, tail := i*4, (i+1)*4
+		if tail > len(src) {
+			// Last frame might be short.
+			tail = len(src)
+		}
+		b := src[head:tail]
+			// Pad last frame if necessary.
+		for len(b) < 4 {
+			b = append(b, 0)
+		}
 		// Take slice of 4 bytes as big endian uint32...
-		v := binary.BigEndian.Uint32(src[i*4 : (i+1)*4])
-		// v := binary.BigEndian.Uint32(src[i*4 : (i+1)*4])
+		v := binary.BigEndian.Uint32(b)
 		// Convert to Z85, most significant byte first
 		for z := 0; z < 5; z++ {
 			buf[4-z] = btoa[v%85]
@@ -58,9 +70,22 @@ func Z85EncodeAppend(dst []byte, src []byte) []byte {
 // Because src is depleted more quickly than dst grows, it is acceptable for dst to overlap src.
 func Z85DecodeAppend(dst []byte, src []byte) []byte {
 	nFrames := len(src) / 5
+	if nFrames*5 < len(src) {
+		nFrames++
+	}
 
 	for i := 0; i < nFrames; i++ {
-		aFrame := src[i*5 : (i+1)*5] // Ascii Frame
+		head, tail := i*5, (i+1)*5
+		if tail > len(src) {
+			// Last frame might be short.
+			tail = len(src)
+		}
+		aFrame := src[head:tail] // Ascii Frame
+
+		// Pad last frame if necessary.
+		for len(aFrame) < 5 {
+			aFrame = append(aFrame, '0')
+		}
 
 		// Convert Ascii Frame to uint32.
 		var v uint32 = uint32(atob[aFrame[0]])

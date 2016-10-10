@@ -1,9 +1,11 @@
 package blob
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 
@@ -63,6 +65,7 @@ func (v *InfluxVolume) PutBlock(data []byte, bm *BlockMeta) error {
 	return v.client.SendWrite(buf, influxclient.SendOpts{
 		Database:        v.database,
 		RetentionPolicy: v.retentionPolicy,
+		Consistency:     "all", // seeing too many errors on consistency one.
 	})
 }
 
@@ -72,16 +75,24 @@ func (v *InfluxVolume) GetBlock(bm *BlockMeta) ([]byte, error) {
 		return nil, err
 	}
 
-	// TODO: validate checksum
-
 	// It's safe to Z85DecodeAppend into the source slice.
-	return Z85DecodeAppend(encoded[:0], encoded), nil
-}
+	raw := Z85DecodeAppend(encoded[:0], encoded)
+	raw = raw[:bm.expSize] // If decoding a short frame, don't read into padding.
 
-func (v *InfluxVolume) List(prefix, measurement string) ([]*FileMeta, error) {
-	// SHOW SERIES FROM <m> WHERE path =~ /^.../ AND bi='1'
-	//
-	return nil, nil
+	// Ensure the raw data matches the SHA.
+	h := sha256.New()
+
+	if n, err := io.Copy(h, bytes.NewReader(raw)); err != nil {
+		return nil, err
+	} else if n != int64(bm.expSize) {
+		return nil, fmt.Errorf("Expected to read %d bytes, got %d", bm.expSize, n)
+	}
+
+	if !bytes.Equal(h.Sum(nil), bm.SHA256[:]) {
+		return nil, fmt.Errorf("GetBlock: checksum did not match! exp %x, got %x", bm.SHA256, h.Sum(nil))
+	}
+
+	return raw, nil
 }
 
 // ListBlocks returns a slice of block meta information belonging to path exactly.
@@ -193,6 +204,7 @@ func (m *metaBuilder) Add(sk string) error {
 	return nil
 }
 
+// getV returns the value in a key-value pair separated by =.
 func getV(k, kv string) (string, error) {
 	parts := strings.Split(kv, "=")
 	if len(parts) != 2 {
@@ -204,6 +216,7 @@ func getV(k, kv string) (string, error) {
 	return parts[1], nil
 }
 
+// fileMetaFromFileKey returns a new FileMeta based on the given fileKey.
 func fileMetaFromFileKey(fk fileKey) (*FileMeta, error) {
 	blockSize, err := getV("bs", fk.BlockSize)
 	if err != nil {

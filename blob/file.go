@@ -51,8 +51,8 @@ func (fm *FileMeta) NewBlockMeta(blockIndex int) *BlockMeta {
 		expSize: fm.BlockSize,
 	}
 
-	if bm.offset > fm.Size {
-		bm.expSize = fm.Size % fm.BlockSize
+	if bm.offset+bm.expSize > fm.Size {
+		bm.expSize = fm.Size - bm.offset
 	}
 
 	return bm
@@ -60,7 +60,11 @@ func (fm *FileMeta) NewBlockMeta(blockIndex int) *BlockMeta {
 
 // NumBlocks returns the number of blocks in the file.
 func (fm *FileMeta) NumBlocks() int {
-	return fm.Size / fm.BlockSize
+	n := fm.Size / fm.BlockSize
+	if n * fm.BlockSize < fm.Size {
+		n ++
+	}
+	return n
 }
 
 // BlockMeta is the meta-information about a block.

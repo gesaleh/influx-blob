@@ -2,6 +2,7 @@ package blob
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"sync"
@@ -70,8 +71,10 @@ func (e *Engine) PutFile(f io.ReaderAt, fm *FileMeta, bp BlockPutter) (*PutFileP
 			<-e.upR
 			defer func() { e.upR <- struct{}{} }()
 
-			r := io.NewSectionReader(f, int64(bm.offset), int64(bm.expSize))
-			if err := e.PutBlock(r, bm, bp); err != nil {
+			if err := bm.SetSHA256(io.NewSectionReader(f, int64(bm.offset), int64(bm.expSize))); err != nil {
+				panic(err)
+			}
+			if err := e.PutBlock(io.NewSectionReader(f, int64(bm.offset), int64(bm.expSize)), bm, bp); err != nil {
 				panic(err)
 			}
 			// TODO: notify somehow of completion?
@@ -89,10 +92,15 @@ func (e *Engine) PutFile(f io.ReaderAt, fm *FileMeta, bp BlockPutter) (*PutFileP
 }
 
 func (e *Engine) PutBlock(r io.Reader, bm *BlockMeta, bp BlockPutter) error {
-	data := make([]byte, 0, bm.expSize)
-	buf := bytes.NewBuffer(data)
-	if _, err := io.Copy(buf, r); err != nil {
+	buf := bytes.NewBuffer(make([]byte, 0, bm.expSize))
+	if n, err := io.Copy(buf, r); err != nil {
 		return err
+	} else if n != int64(bm.expSize) {
+		return fmt.Errorf("did not read enough data: exp %d, got %d", bm.expSize, n)
+	}
+	data := buf.Bytes()
+	if len(data) != bm.expSize {
+		return fmt.Errorf("PutBlock %d: exp size: %d, got %d", bm.Index, bm.expSize, len(data))
 	}
 	bm.SetSHA256(bytes.NewReader(data))
 	return bp.PutBlock(data, bm)
@@ -108,12 +116,11 @@ func (p *PutFileProgress) Wait() {
 	<-p.done
 }
 
-func (e *Engine) GetFile(w io.WriterAt, fm *FileMeta, bg BlockGetter) (*PutFileProgress, error) {
+func (e *Engine) GetBlocks(w io.WriterAt, bms []*BlockMeta, bg BlockGetter) (*PutFileProgress, error) {
 	var wg sync.WaitGroup
-	nBlocks := fm.NumBlocks()
-	for i := 0; i < nBlocks; i++ {
+	for _, bm := range bms {
 		wg.Add(1)
-		bm := fm.NewBlockMeta(i)
+		bm := bm
 		go func() {
 			defer wg.Done()
 			// Acquire/release semaphore.
@@ -144,16 +151,24 @@ func (e *Engine) GetBlock(w io.WriterAt, bm *BlockMeta, bg BlockGetter) error {
 	if err != nil {
 		return err
 	}
-	if len(data) != bm.BlockSize {
+	if len(data) != bm.expSize {
 		return fmt.Errorf("data did not match block size")
 	}
-
-	// TODO: validate sha512
 
 	if n, err := w.WriteAt(data, int64(bm.offset)); err != nil {
 		return err
 	} else if n != bm.expSize {
 		return fmt.Errorf("block %d did not write expected size %d, got %d", bm.Index, bm.expSize, n)
+	}
+
+	// Calculate the checksum on the data we've received,
+	// and make sure it matches expected.
+	hash := sha256.New()
+	if _, err := io.Copy(hash, bytes.NewReader(data)); err != nil {
+		return err
+	}
+	if calc := hash.Sum(nil); !bytes.Equal(calc, bm.SHA256[:]) {
+		return fmt.Errorf("Calculated checksum %x, expected %x", calc, bm.SHA256[:])
 	}
 
 	return nil
