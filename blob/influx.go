@@ -46,13 +46,15 @@ func NewInfluxVolume(httpURL, database, retentionPolicy string) *InfluxVolume {
 //   sz: The size of the entire file, base 10. May not be a multiple of bs.
 //
 // Fields:
+//   b: Reserved. Currently always set to integer zero.
+//      Used to avoid downloading a whole block when selecting a field is necessary.
 //   z: Z85-encoded binary data representing the raw content of the block.
 //      For all but the last block, len(z) == bs * 5 / 4.
 //      For the last block, len(z) == sz % bs, rounding up to nearest 4 for padding.
 func (v *InfluxVolume) PutBlock(data []byte, bm *BlockMeta) error {
 	fm := bm.FileMeta
 
-	prefix := fmt.Sprintf("%s,bi=%d,bs=%d,bsha256=%x,sha256=%x,sz=%d z=\"",
+	prefix := fmt.Sprintf("%s,bi=%d,bs=%d,bsha256=%x,sha256=%x,sz=%d b=0i,z=\"",
 		fm.Path, bm.Index, fm.BlockSize, bm.SHA256[:], fm.SHA256[:], fm.Size,
 	)
 	suffix := fmt.Sprintf("\" %d\n", fm.Time)
