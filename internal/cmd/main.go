@@ -13,7 +13,7 @@ import (
 
 func Main(args []string) error {
 	if len(args) < 2 {
-		return fmt.Errorf("Usage: %s [put|get] ARGS...", args[0])
+		return fmt.Errorf("Usage: %s [put|get|ls] ARGS...", args[0])
 	}
 
 	v := blob.NewInfluxVolume("http://localhost:8086", "blob", "")
@@ -32,6 +32,8 @@ func Main(args []string) error {
 		err = put(args, e, v)
 	case "get":
 		err = get(args, e, v)
+	case "ls", "list":
+		err = list(args, v)
 	default:
 		err = fmt.Errorf("Available commands: get, put")
 	}
@@ -107,6 +109,30 @@ func get(args []string, e *blob.Engine, v *blob.InfluxVolume) error {
 	sha := bms[0].FileMeta.SHA256[:]
 	if !bytes.Equal(h.Sum(nil), sha) {
 		return fmt.Errorf("exp file checksum %x, got %x", sha, h.Sum(nil))
+	}
+
+	return nil
+}
+
+// list shows all files that match the supplied prefix.
+func list(args []string, v *blob.InfluxVolume) error {
+	if l := len(args); l != 2 && l != 3 {
+		return fmt.Errorf("Usage: %s inspect [/path/prefix]", args[0])
+	}
+
+	pattern := "/"
+	if len(args) == 3 {
+		pattern = args[2]
+	}
+	files, err := v.ListFiles(pattern, blob.ListOptions{
+		ListMatch: blob.ByPrefix,
+	})
+	if err != nil {
+		return err
+	}
+
+	for _, f := range files {
+		fmt.Println(f)
 	}
 
 	return nil

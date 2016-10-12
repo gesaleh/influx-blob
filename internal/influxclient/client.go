@@ -7,6 +7,8 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strings"
 )
 
 type Client struct {
@@ -156,4 +158,56 @@ func (c *Client) GetSingleBlock(db, rp, path string, blockIndex int) ([]byte, er
 
 	z := ss[0].Values[0][1].(string)
 	return []byte(z), nil
+}
+
+func (c *Client) ShowMeasurementsByPrefix(pattern, db string) ([]string, error) {
+	// Sanitize input for an Influx regexp.
+	prefix := regexp.QuoteMeta(pattern)
+	prefix = strings.Replace(pattern, "/", "\\/", -1)
+	q := fmt.Sprintf("SHOW MEASUREMENTS WITH MEASUREMENT =~ /^%s/", prefix)
+	vals := url.Values{
+		"q":  []string{q},
+		"db": []string{db},
+	}
+	req, err := http.NewRequest("GET", c.baseURL+"/query?"+vals.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.c.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var influxResp struct {
+		Results []struct {
+			Series []struct {
+				Values [][]string `json:"values"`
+			} `json:"series"`
+		} `json:"results"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&influxResp); err != nil {
+		return nil, err
+	}
+
+	if len(influxResp.Results) == 0 {
+		return nil, fmt.Errorf("No results found in: %s", q)
+	}
+	ss := influxResp.Results[0].Series
+	if len(ss) == 0 {
+		return nil, fmt.Errorf("No filenames with prefix %s", pattern)
+	}
+	vs := ss[0].Values
+
+	names := make([]string, len(vs))
+	for i, vs := range vs {
+		if len(vs) != 1 {
+			return nil, fmt.Errorf("Expected one entry per Values, got %d", len(vs))
+		}
+		names[i] = vs[0]
+	}
+
+	return names, nil
 }

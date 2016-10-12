@@ -122,6 +122,23 @@ func (v *InfluxVolume) ListBlocks(path string) ([]*BlockMeta, error) {
 	return mb.blocks, nil
 }
 
+type ListMatch int
+
+const (
+	ByPrefix ListMatch = iota
+)
+
+type ListOptions struct {
+	Database  string
+	ListMatch ListMatch
+}
+
+// ListFiles returns a list of filenames matching pattern, according to opts.ListMatch
+func (v *InfluxVolume) ListFiles(pattern string, opts ListOptions) ([]string, error) {
+	// For now, assuming ByPrefix is the only choice.
+	return v.client.ShowMeasurementsByPrefix(pattern, v.database)
+}
+
 // Internal struct to quickly look up a timestamp-less FileMeta from a series key.
 // You don't need to bother splitting the tags on = if you don't want to.
 type fileKey struct {
