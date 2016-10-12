@@ -2,10 +2,7 @@ package blob
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"io"
 	"strconv"
 	"strings"
 
@@ -81,17 +78,8 @@ func (v *InfluxVolume) GetBlock(bm *BlockMeta) ([]byte, error) {
 	raw := Z85DecodeAppend(encoded[:0], encoded)
 	raw = raw[:bm.expSize] // If decoding a short frame, don't read into padding.
 
-	// Ensure the raw data matches the SHA.
-	h := sha256.New()
-
-	if n, err := io.Copy(h, bytes.NewReader(raw)); err != nil {
+	if err := bm.CompareSHA256Against(bytes.NewReader(raw)); err != nil {
 		return nil, err
-	} else if n != int64(bm.expSize) {
-		return nil, fmt.Errorf("Expected to read %d bytes, got %d", bm.expSize, n)
-	}
-
-	if !bytes.Equal(h.Sum(nil), bm.SHA256[:]) {
-		return nil, fmt.Errorf("GetBlock: checksum did not match! exp %x, got %x", bm.SHA256, h.Sum(nil))
 	}
 
 	return raw, nil
@@ -210,14 +198,9 @@ func (m *metaBuilder) Add(sk string) error {
 	if err != nil {
 		return err
 	}
-	if dl := hex.DecodedLen(len(hexSha)); dl != sha256.Size {
-		return fmt.Errorf("exp sha length %d, got %s (len %d)", sha256.Size, hexSha, dl)
-	}
-	sha, err := hex.DecodeString(hexSha)
-	if err != nil {
+	if err := bm.SetSHA256String(hexSha); err != nil {
 		return err
 	}
-	copy(bm.SHA256[:], sha)
 
 	m.blocks = append(m.blocks, bm)
 	return nil
@@ -255,23 +238,18 @@ func fileMetaFromFileKey(fk fileKey) (*FileMeta, error) {
 		return nil, err
 	}
 
-	hexSha, err := getV("sha256", fk.SHA256)
-	if err != nil {
-		return nil, err
-	}
-	if dl := hex.DecodedLen(len(hexSha)); dl != sha256.Size {
-		return nil, fmt.Errorf("exp sha length %d, got %s (len %d)", sha256.Size, hexSha, dl)
-	}
-	sha, err := hex.DecodeString(hexSha)
-	if err != nil {
-		return nil, err
-	}
-
 	fm := &FileMeta{
 		Path:      fk.Path,
 		BlockSize: bs,
 		Size:      sz,
 	}
-	copy(fm.SHA256[:], sha)
+	hexSha, err := getV("sha256", fk.SHA256)
+	if err != nil {
+		return nil, err
+	}
+	if err := fm.SetSHA256String(hexSha); err != nil {
+		return nil, err
+	}
+
 	return fm, nil
 }

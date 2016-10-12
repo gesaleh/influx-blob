@@ -1,10 +1,7 @@
 package cmd
 
 import (
-	"bytes"
-	"crypto/sha256"
 	"fmt"
-	"io"
 	"os"
 	"time"
 
@@ -84,7 +81,6 @@ func get(args []string, e *blob.Engine, v *blob.InfluxVolume) error {
 		return fmt.Errorf("No blocks found for path: %s", args[2])
 	}
 
-	// Open the file write-only, must not already exist.
 	out, err := os.OpenFile(args[3], os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return err
@@ -101,15 +97,11 @@ func get(args []string, e *blob.Engine, v *blob.InfluxVolume) error {
 	progress.Wait()
 	fmt.Println("Get complete!")
 
-	h := sha256.New()
-	if _, err := io.Copy(h, out); err != nil {
+	fmt.Println("Comparing checksum...")
+	if err := bms[0].FileMeta.CompareSHA256Against(out); err != nil {
 		return err
 	}
-
-	sha := bms[0].FileMeta.SHA256[:]
-	if !bytes.Equal(h.Sum(nil), sha) {
-		return fmt.Errorf("exp file checksum %x, got %x", sha, h.Sum(nil))
-	}
+	fmt.Println("Checksum matches. Get successful.")
 
 	return nil
 }

@@ -2,7 +2,6 @@ package blob
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"fmt"
 	"io"
 	"sync"
@@ -163,12 +162,8 @@ func (e *Engine) GetBlock(w io.WriterAt, bm *BlockMeta, bg BlockGetter) error {
 
 	// Calculate the checksum on the data we've received,
 	// and make sure it matches expected.
-	hash := sha256.New()
-	if _, err := io.Copy(hash, bytes.NewReader(data)); err != nil {
+	if err := bm.CompareSHA256Against(bytes.NewReader(data)); err != nil {
 		return err
-	}
-	if calc := hash.Sum(nil); !bytes.Equal(calc, bm.SHA256[:]) {
-		return fmt.Errorf("Calculated checksum %x, expected %x", calc, bm.SHA256[:])
 	}
 
 	return nil
