@@ -6,29 +6,24 @@ import (
 	"time"
 
 	"github.com/mark-rushakoff/influx-blob/blob"
+	"github.com/mark-rushakoff/influx-blob/engine"
 )
 
 func Main(args []string) error {
 	if len(args) < 2 {
-		return fmt.Errorf("Usage: %s [put|get|ls] ARGS...", args[0])
+		return fmt.Errorf("Usage: %s [up|down|ls] ARGS...", args[0])
 	}
 
 	v := blob.NewInfluxVolume("http://localhost:8086", "blob", "")
 
-	e, err := blob.NewEngine(blob.EngineConfig{
-		UploadReaders: 2,
-		UploadWriters: 2,
-	})
-	if err != nil {
-		return err
-	}
+	e := engine.NewEngine(0, 0)
 
-	err = nil
+	var err error
 	switch args[1] {
-	case "put":
-		err = put(args, e, v)
-	case "get":
-		err = get(args, e, v)
+	case "up", "upload":
+		err = up(args, e, v)
+	case "down", "download":
+		err = down(args, e, v)
 	case "ls", "list":
 		err = list(args, v)
 	default:
@@ -37,9 +32,9 @@ func Main(args []string) error {
 	return err
 }
 
-func put(args []string, e *blob.Engine, v *blob.InfluxVolume) error {
+func up(args []string, e *engine.Engine, v *blob.InfluxVolume) error {
 	if len(args) != 4 {
-		return fmt.Errorf("Usage: %s put /path/to/local/file /path/on/remote/machine", args[0])
+		return fmt.Errorf("Usage: %s up /path/to/local/file /path/on/remote/machine", args[0])
 	}
 
 	in, err := os.Open(args[2])
@@ -56,21 +51,21 @@ func put(args []string, e *blob.Engine, v *blob.InfluxVolume) error {
 	fm.BlockSize = 1024
 	fm.Time = time.Now().Unix()
 
-	progress, err := e.PutFile(in, fm, v)
+	ctx := e.UploadFile(in, fm, v)
 	if err != nil {
 		return err
 	}
 
 	fmt.Println("Put initiated, waiting for completion.")
-	progress.Wait()
+	ctx.Wait()
 	fmt.Println("Put complete!")
 
 	return nil
 }
 
-func get(args []string, e *blob.Engine, v *blob.InfluxVolume) error {
+func down(args []string, e *engine.Engine, v *blob.InfluxVolume) error {
 	if len(args) != 4 {
-		return fmt.Errorf("Usage: %s get /path/on/remote/machine /path/to/local/file", args[0])
+		return fmt.Errorf("Usage: %s down /path/on/remote/machine /path/to/local/file", args[0])
 	}
 
 	bms, err := v.ListBlocks(args[2])
@@ -88,13 +83,13 @@ func get(args []string, e *blob.Engine, v *blob.InfluxVolume) error {
 	defer out.Close()
 
 	// TODO: handle multiple FileMeta
-	progress, err := e.GetBlocks(out, bms, v)
+	ctx, err := e.DownloadFile(out, bms, v)
 	if err != nil {
 		return err
 	}
 
 	fmt.Println("Get initiated, waiting for completion.")
-	progress.Wait()
+	ctx.Wait()
 	fmt.Println("Get complete!")
 
 	fmt.Println("Comparing checksum...")

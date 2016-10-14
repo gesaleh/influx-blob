@@ -91,6 +91,14 @@ type BlockMeta struct {
 	expSize int
 }
 
+func (bm *BlockMeta) FileOffset() int64 {
+	return int64(bm.offset)
+}
+
+func (bm *BlockMeta) ExpSize() int {
+	return bm.expSize
+}
+
 // SetSHA256 copies r to the internal hashing mechanism.
 func (bm *BlockMeta) SetSHA256(r io.Reader) error {
 	h := sha256.New()

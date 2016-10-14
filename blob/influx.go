@@ -24,7 +24,7 @@ func NewInfluxVolume(httpURL, database, retentionPolicy string) *InfluxVolume {
 	}
 }
 
-// PutBlock writes the block to InfluxDB.
+// UploadBlock writes the block to InfluxDB.
 // This method is safe to call concurrently.
 //
 // The block is stored with this schema:
@@ -48,7 +48,7 @@ func NewInfluxVolume(httpURL, database, retentionPolicy string) *InfluxVolume {
 //   z: Z85-encoded binary data representing the raw content of the block.
 //      For all but the last block, len(z) == bs * 5 / 4.
 //      For the last block, len(z) == sz % bs, rounding up to nearest 4 for padding.
-func (v *InfluxVolume) PutBlock(data []byte, bm *BlockMeta) error {
+func (v *InfluxVolume) UploadBlock(data []byte, bm *BlockMeta) error {
 	fm := bm.FileMeta
 
 	prefix := fmt.Sprintf("%s,bi=%d,bs=%d,bsha256=%x,sha256=%x,sz=%d b=0i,z=\"",
@@ -68,7 +68,7 @@ func (v *InfluxVolume) PutBlock(data []byte, bm *BlockMeta) error {
 	})
 }
 
-func (v *InfluxVolume) GetBlock(bm *BlockMeta) ([]byte, error) {
+func (v *InfluxVolume) DownloadBlock(bm *BlockMeta) ([]byte, error) {
 	encoded, err := v.client.GetSingleBlock(v.database, v.retentionPolicy, bm.Path, bm.Index)
 	if err != nil {
 		return nil, err
