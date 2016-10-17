@@ -47,6 +47,10 @@ func NewEngine(uploaders, downloaders int) *Engine {
 	return e
 }
 
+func (e *Engine) NumWorkers() (uploaders, downloaders int) {
+	return e.uploaders, e.downloaders
+}
+
 type BlockUploader interface {
 	UploadBlock(data []byte, bm *blob.BlockMeta) error
 }
@@ -88,9 +92,10 @@ type uploadTask struct {
 }
 
 func (e *Engine) handleUpload(t uploadTask) {
+	defer close(t.ctx.done)
+
 	t.ctx.startedAt = time.Now()
 	defer func() { t.ctx.finishedAt = time.Now() }()
-	defer close(t.ctx.done)
 
 	bm := t.ctx.bm
 	if err := bm.SetSHA256(
@@ -151,9 +156,10 @@ func (e *Engine) DownloadFile(w io.WriterAt, bms []*blob.BlockMeta, bd BlockDown
 }
 
 func (e *Engine) handleDownload(t downloadTask) {
+	defer close(t.ctx.done)
+
 	t.ctx.startedAt = time.Now()
 	defer func() { t.ctx.finishedAt = time.Now() }()
-	defer close(t.ctx.done)
 
 	if err := DownloadBlock(t.w, t.ctx.bm, t.bd); err != nil {
 		panic(err)

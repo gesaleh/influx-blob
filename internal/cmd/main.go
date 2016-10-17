@@ -60,6 +60,11 @@ func up(args []string, e *engine.Engine, v *blob.InfluxVolume) error {
 	ctx.Wait()
 	fmt.Println("Put complete!")
 
+	stats := ctx.Stats()
+	uploaders, _ := e.NumWorkers()
+	fmt.Printf("Uploaded %d bytes in %.2fs\n", stats.Bytes, stats.Duration.Seconds())
+	fmt.Printf("(Used %d uploaders and %d chunks of %dB each)\n", uploaders, fm.NumBlocks(), fm.BlockSize)
+
 	return nil
 }
 
@@ -92,11 +97,17 @@ func down(args []string, e *engine.Engine, v *blob.InfluxVolume) error {
 	ctx.Wait()
 	fmt.Println("Get complete!")
 
+	fm := bms[0].FileMeta
 	fmt.Println("Comparing checksum...")
-	if err := bms[0].FileMeta.CompareSHA256Against(out); err != nil {
+	if err := fm.CompareSHA256Against(out); err != nil {
 		return err
 	}
 	fmt.Println("Checksum matches. Get successful.")
+
+	stats := ctx.Stats()
+	_, downloaders := e.NumWorkers()
+	fmt.Printf("Downloaded %d bytes in %.2fs\n", stats.Bytes, stats.Duration.Seconds())
+	fmt.Printf("(Used %d downloaders and %d chunks of %dB each)\n", downloaders, fm.NumBlocks(), fm.BlockSize)
 
 	return nil
 }
